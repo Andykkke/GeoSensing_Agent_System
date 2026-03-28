@@ -1,0 +1,84 @@
+根据我们讨论的“**标签化硬过滤**”与“**签名对齐**”技术方案，我为你重新修订了本体定义。
+
+此次修改的核心目标是将原本模糊的文字描述转变为**程序可直接对比的结构化属性**。通过引入 `input_signature` 和 `semantic_tag`，你的 **图谱导航器** 模块将能够仅依靠 Cypher 和 Python 逻辑实现 100% 准确的工具筛选。
+
+------
+
+# 🌍 GeoSensing 知识图谱本体定义 (修订版 v2.0)
+
+## 1. 核心变更说明
+
+- **数据实体 (`GeoSpatialData`)**: 新增 `semantic_tag`（业务标签），并将 `data_type` 规范化为物理类型枚举，用于实现精准的业务对齐。
+- **原子工具 (`GeoTool`)**: 新增 `input_signature`（输入签名）和 `output_signature`（输出签名）。其中输入签名采用 JSON 格式记录所需标签及其**数量要求**，用于“硬过滤”剪枝。
+- **执行步骤 (`ToolChain`)**: 保留 `thought`（思维链）和 `parameters`（实际参数），支撑“图约束下的 ReAct”模式。
+
+------
+
+## 2. 节点定义 (Nodes & Properties)
+
+### 2.1 灾害背景域 (Context Domain)
+
+| **节点标签**        | **属性名**       | **数据类型** | **说明**                   |
+| ------------------- | ---------------- | ------------ | -------------------------- |
+| **`DisasterEvent`** | `event_id`       | String       | (主键) 事件唯一标识        |
+| (灾害事件)          | `event_type`     | String       | 灾害类型（如：洪涝、地震） |
+|                     | `severity_level` | String       | 响应等级                   |
+|                     | `desc`           | String       | 详细情境描述               |
+
+### 2.2 任务意图域 (Intent Domain)
+
+| **节点标签**  | **属性名**  | **数据类型** | **说明**                                               |
+| ------------- | ----------- | ------------ | ------------------------------------------------------ |
+| **`GeoTask`** | `task_id`   | String       | (主键) 任务唯一标识                                    |
+| (地理任务)    | `task_type` | Enum         | **任务终点类型**：Discovery, Evaluation, Configuration |
+|               | `desc`      | String       | 任务目标的自然语言描述                                 |
+
+### 2.3 行动执行域 (Action Domain)
+
+| **节点标签**    | **属性名**             | **数据类型**    | **修订/新增说明**                                            |
+| --------------- | ---------------------- | --------------- | ------------------------------------------------------------ |
+| **`ToolChain`** | `step_id`              | Int             | 步骤序号（1, 2, 3...）                                       |
+| (执行步骤)      | `thought`              | String          | Agent 在该步骤的推理逻辑描述                                 |
+|                 | `parameters`           | String          | 实际调用参数（JSON 字符串）                                  |
+|                 | `phase`                | Enum            | 所属阶段：Discovery, Evaluation, Configuration               |
+| **`GeoTool`**   | **`input_signature`**  | **JSON String** | **[新增]** 输入需求及数量要求。示例：`{"Boundary": 2}` 或 `{"Boundary": 1, "SatelliteTLE": 1}` |
+| (原子工具)      | **`output_signature`** | **String**      | **[新增]** 产出数据的业务标签。示例：`"OverlapDict"`         |
+|                 | `tool_name`            | String          | (主键) 工具名称                                              |
+|                 | `function_category`    | Enum            | 所属五大分类                                                 |
+|                 | `description`          | String          | 工具功能描述                                                 |
+
+### 2.4 数据流转与结果域 (Data & Result Domain)
+
+| **节点标签**            | **属性名**         | **数据类型** | **修订/新增说明**                                            |
+| ----------------------- | ------------------ | ------------ | ------------------------------------------------------------ |
+| **`GeoSpatialData`**    | **`semantic_tag`** | **String**   | **[新增] 业务身份标签**。枚举值：`Boundary`, `SatelliteTLE`, `OverlapDict`, `PlanningScheme`, `SensorProfile`, `EvaluationReport`, `AssetInventory` |
+| (空间数据)              | **`data_type`**    | **Enum**     | **[修订] 物理类型强绑定**。仅限：`GeoJSON_File`, `Dict`, `List` |
+|                         | `file_path`        | String       | 物理存储路径或内存引用标识                                   |
+|                         | `desc`             | String       | 数据的具体语义描述（用于 LLM 决策时的参数映射）              |
+| **`ObservationResult`** | `content`          | String       | 最终决策结果内容                                             |
+
+------
+
+## 3. 关系定义 (Relationships)
+
+### 3.1 核心逻辑流转
+
+- `(:GeoTask)-[:DECOMPOSED_INTO]->(:ToolChain)`: 任务分解为步骤。
+- `(:ToolChain)-[:CALLS]->(:GeoTool)`: 步骤调用工具。
+- `(:ToolChain)-[:NEXT]->(:ToolChain)`: 步骤间的先后顺序。
+
+### 3.2 标签化数据血缘 (Tag-Based Lineage)
+
+- `(:ToolChain)-[:CONSUMES]->(:GeoSpatialData)`: 步骤消耗数据。**约束**：数据的 `semantic_tag` 必须匹配工具 `input_signature` 中的 Key。
+- `(:ToolChain)-[:PRODUCES]->(:GeoSpatialData)`: 步骤生成数据。**约束**：数据的 `semantic_tag` 必须等于工具的 `output_signature`。
+
+------
+
+## 4. 针对“硬过滤”的属性补充说明
+
+### 如何利用此本体执行路径 B 推理？
+
+1. **资产统计**：**状态管理器**遍历当前所有 `GeoSpatialData`，统计每个 `semantic_tag` 的数量。
+2. **Cypher 初筛**：查询 `GeoTool`，其 `input_signature` 的所有键值必须存在于当前的标签集合中。
+3. **Python 数量对齐**：对比资产统计数量与 `input_signature` 中的数值。若 `Boundary` 数量 $\ge 2$，则 `contains_properly` 工具才会被激活。
+4. **LLM 决策**：LLM 拿到被“法律（本体）”过滤后的 2-3 个合法工具，根据 `desc` 属性完成最后的参数填空。
