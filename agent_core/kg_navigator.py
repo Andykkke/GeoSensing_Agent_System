@@ -83,7 +83,7 @@ class KGNavigator:
 
 # 快速测试脚本
 if __name__ == "__main__":
-    # 模拟当前只有 PlaceName 资产的状态
+    # 模拟一下当前只有 PlaceName 资产的状态
     test_summary = {"PlaceName": 1}
 
     navigator = KGNavigator()
