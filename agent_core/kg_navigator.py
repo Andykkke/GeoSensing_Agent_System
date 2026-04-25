@@ -37,7 +37,25 @@ class KGNavigator:
                t.output_signature AS output_tag
         """
         all_tools = self.graph.run(query).data()
+    路径 A 执行逻辑
+    def path_a_intent_matching(self, parsed_intent):
+    # 1. 从 Neo4j 获取所有历史任务的描述与元数据
+    history_tasks = self.graph.run("MATCH (t:GeoTask)-[:DECOMPOSED_INTO]->(chain) RETURN t, chain").data()
+    
+        scores = []
+        for hist in history_tasks:
+        # 2. 计算各维度相似度
+        s_goal = cosine_similarity(parsed_intent['action_vec'], hist['goal_vec']) * 0.40
+        s_context = cosine_similarity(parsed_intent['context_vec'], hist['context_vec']) * 0.30
+        s_loc = text_match(parsed_intent['location'], hist['spatial_scope']) * 0.15
+        s_obj = keyword_match(parsed_intent['object'], hist['risk_category']) * 0.10
+        s_time = time_overlap(parsed_intent['time'], hist['temporal_scope']) * 0.05
+        
+        total_score = s_goal + s_context + s_loc + s_obj + s_time
+        scores.append((total_score, hist['chain_nodes']))
 
+    # 3. 提取高分剧本 (Threshold > 0.8)
+    # 返回该历史剧本中的第一个工具作为强建议
         eligible_tools = []
 
         for tool in all_tools:
